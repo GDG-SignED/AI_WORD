@@ -19,16 +19,16 @@ FRAMES = 30  # 시퀀스당 프레임 개수
 FONT_PATH = "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc"  # 한글 폰트 파일 경로
 font = ImageFont.truetype(FONT_PATH, 32)
 
-# 데이터 저장 디렉토리
+# 데이터 저장 디렉토리 생성
 os.makedirs(DATA_PATH, exist_ok=True)
 for gesture in GESTURES:
     os.makedirs(os.path.join(DATA_PATH, gesture), exist_ok=True)
 
-# 카메라 캡처
+# 카메라 캡처 시작
 cap = cv2.VideoCapture(0)
-with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands:
+with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5, max_num_hands=2) as hands:
     for gesture in GESTURES:
-        # 존재하는 파일 개수 확인
+        # 기존 파일 개수 확인
         gesture_path = os.path.join(DATA_PATH, gesture)
         existing_files = len([f for f in os.listdir(gesture_path) if f.endswith('.npy')])
 
@@ -47,16 +47,26 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5) a
                 results = hands.process(image)
                 image.flags.writeable = True
 
-                # 랜드마크 추출
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                        landmarks = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]).flatten()
-                        frames.append(landmarks)
-                else:
-                    frames.append(np.zeros(21 * 3))  # 손이 감지되지 않을 경우 빈 값 추가
+                # 랜드마크 추출 및 저장 (양손 처리)
+                left_hand = np.zeros(21 * 3)  # 왼손 데이터 (초기값: 0)
+                right_hand = np.zeros(21 * 3)  # 오른손 데이터 (초기값: 0)
 
-                # OpenCV 이미지를 Pillow 이미지로 변환
+                if results.multi_hand_landmarks and results.multi_handedness:
+                    for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                        handedness = results.multi_handedness[idx].classification[0].label
+                        landmarks = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]).flatten()
+
+                        if handedness == "Left":  # 왼손일 경우
+                            left_hand = landmarks
+                        elif handedness == "Right":  # 오른손일 경우
+                            right_hand = landmarks
+
+                        mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+                # 양손 데이터를 하나로 합쳐 저장 (왼손 + 오른손)
+                frames.append(np.concatenate([left_hand, right_hand]))
+
+                # OpenCV 이미지를 Pillow 이미지로 변환 (한글 텍스트 출력용)
                 frame_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 draw = ImageDraw.Draw(frame_pil)
 
@@ -73,8 +83,8 @@ with mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5) a
                 if cv2.waitKey(10) & 0xFF == ord('q'):
                     break
 
-            # 시퀀스 데이터 저장
-            np.save(os.path.join(DATA_PATH, gesture, f"{gesture}_목경서_{sequence}.npy"), np.array(frames))
+            # 시퀀스 데이터 저장 (양손 데이터 포함)
+            np.save(os.path.join(DATA_PATH, gesture, f"{gesture}_sequence_{sequence}.npy"), np.array(frames))
 
 cap.release()
 cv2.destroyAllWindows()
